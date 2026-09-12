@@ -18,7 +18,7 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
 
-# 2. Voice Presets Configuration (Microsoft Natural Burmese Voices)
+# 2. Voice Presets Configuration
 VOICE_PRESETS = {
     "female": {
         "label": "👩 မနိလာ (အမျိုးသမီး အသံ)",
@@ -48,6 +48,9 @@ VOICE_PRESETS = {
 
 # 3. Telegram Bot Handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Bot ကို ပြန်ဖွင့်ပေးခြင်း
+    context.chat_data["disabled"] = False
+    
     keyboard = [
         [
             InlineKeyboardButton("👩 မနိလာ", callback_data="style_female"),
@@ -62,11 +65,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current = context.user_data.get("style", "female")
     preset_label = VOICE_PRESETS[current]["label"]
     
-    await update.message.reply_text(
-        f"မင်္ဂလာပါ အစ်ကိုအောင်! SORA TTS Voice Bot မှ ကြိုဆိုပါတယ်။\n\n"
+    msg = (
+        f"မင်္ဂလာပါ အစ်ကိုအောင်! SORA Voice Bot ကို ဖွင့်လိုက်ပါပြီ။ ✨\n\n"
         f"လက်ရှိ အသံ: **{preset_label}**\n\n"
-        f"စာသား ပို့ပေးပါ၊ ချက်ချင်း MP3 အသံဖိုင် ပြောင်းပေးပါမယ်ဗျာ။",
-        reply_markup=reply_markup,
+        f"💡 **Group ထဲတွင် သုံးနည်း:**\n"
+        f"Bot ရဲ့ စာသား သို့မဟုတ် အသံဖိုင်ကို **Reply** ပြန်ပြီး စာရေးမှသာ အသံထွက်ပေးပါမည်။\n\n"
+        f"🛑 Bot ကို ခေတ္တ ပိတ်ထားချင်ပါက `/stop` လို့ ပို့ပါ၊ ပြန်ဖွင့်ချင်ပါက `/start` လို့ ပို့ပါ။"
+    )
+    await update.message.reply_text(msg, reply_markup=reply_markup, parse_mode="Markdown")
+
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Bot ကို ခေတ္တ ပိတ်ထားခြင်း
+    context.chat_data["disabled"] = True
+    await update.message.reply_text(
+        "🛑 Bot အလုပ်လုပ်ခြင်းကို ခေတ္တ ရပ်ဆိုင်းလိုက်ပါပြီ။\n"
+        "ပြန်ဖွင့်လိုပါက `/start` ဟု ပို့ပေးပါ အစ်ကိုအောင်။", 
         parse_mode="Markdown"
     )
 
@@ -81,19 +94,39 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["style"] = style_key
             preset_label = VOICE_PRESETS[style_key]["label"]
             await query.edit_message_text(
-                f"✅ Voice Style ကို **{preset_label}** သို့ ပြောင်းလိုက်ပါပြီ။ စာသား ပို့ပေးနိုင်ပါပြီ။", 
+                f"✅ Voice Style ကို **{preset_label}** သို့ ပြောင်းလိုက်ပါပြီ။", 
                 parse_mode="Markdown"
             )
 
 async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Bot ကို /stop လုပ်ထားလျှင် ဘာမှ မလုပ်ပါ
+    if context.chat_data.get("disabled", False):
+        return
+
+    chat_type = update.effective_chat.type
+
+    # Group / Supergroup ထဲမှာဆိုရင် Bot ကို Reply ပြန်ထားတဲ့ စာများကိုပဲ အသံပြောင်းပေးမည်
+    if chat_type in ["group", "supergroup"]:
+        is_reply_to_bot = (
+            update.message.reply_to_message and 
+            update.message.reply_to_message.from_user.id == context.bot.id
+        )
+        if not is_reply_to_bot:
+            return  # Bot ထံ Reply မဟုတ်ပါက လစ်လျူရှုမည်
+
     user_text = update.message.text
+    if not user_text:
+        return
+
     current_style_key = context.user_data.get("style", "female")
     preset = VOICE_PRESETS[current_style_key]
 
-    status_msg = await update.message.reply_text(f"🎙️ {preset['label']} ဖြင့် ဖတ်ပြနေပါတယ်... ခဏစောင့်ပါ...")
+    status_msg = await update.message.reply_text(
+        f"🎙️ {preset['label']} ဖြင့် ဖတ်ပြနေပါတယ်... ခဏစောင့်ပါ...",
+        reply_to_message_id=update.message.message_id
+    )
 
     try:
-        # Edge TTS Stream ပြုလုပ်ခြင်း
         communicate = edge_tts.Communicate(
             text=user_text,
             voice=preset["voice"],
@@ -115,7 +148,8 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 filename="voice_output.mp3",
                 caption=f"🎙️ Voice: {preset['label']}",
                 title=f"{preset['label']}",
-                performer="SORA Audio Studio"
+                performer="SORA Audio Studio",
+                reply_to_message_id=update.message.message_id
             )
             await status_msg.delete()
         else:
@@ -133,7 +167,9 @@ def main():
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
     application = Application.builder().token(bot_token).build()
 
+    # Commands
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("stop", stop))
     application.add_handler(CallbackQueryHandler(button_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, generate_voice))
 
