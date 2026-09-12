@@ -1,13 +1,13 @@
 import os
 import io
+import asyncio
 from threading import Thread
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
-from google import genai
-from google.genai import types
+import edge_tts
 
-# 1. Flask Web Server Setup
+# 1. Flask Web Server Setup (Render Health Check)
 app = Flask(__name__)
 
 @app.route('/')
@@ -18,28 +18,54 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
 
-# 2. Gemini API Client Setup
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-client = genai.Client(api_key=GEMINI_API_KEY)
-
-# 3. Voice Presets
+# 2. Voice Presets Configuration (Microsoft Natural Burmese Voices)
 VOICE_PRESETS = {
-    "normal": {"label": "😊 ရိုးရိုး အသံ", "voice": "Puck", "instruction": "Speak naturally in clear Burmese."},
-    "story": {"label": "📖 ဇာတ်လမ်းပြော အသံ", "voice": "Charon", "instruction": "Speak like an engaging Burmese story narrator with dramatic tone."},
-    "news": {"label": "📰 သတင်းဖတ် အသံ", "voice": "Kore", "instruction": "Speak like a professional Burmese news anchor."},
-    "horror": {"label": "👻 ထိတ်လန့်/သရဲဇာတ်လမ်း အသံ", "voice": "Fenrir", "instruction": "Speak in a creepy, slow, horror narrative voice in Burmese."}
+    "female": {
+        "label": "👩 မနိလာ (အမျိုးသမီး အသံ)",
+        "voice": "my-MM-NilarNeural",
+        "rate": "+0%",
+        "pitch": "+0Hz"
+    },
+    "male": {
+        "label": "👨 မောင်သီဟ (အမျိုးသား အသံ)",
+        "voice": "my-MM-ThihaNeural",
+        "rate": "+0%",
+        "pitch": "+0Hz"
+    },
+    "story": {
+        "label": "📖 ဇာတ်လမ်းပြော အသံ (အေးဆေး)",
+        "voice": "my-MM-NilarNeural",
+        "rate": "-10%",
+        "pitch": "-5Hz"
+    },
+    "news": {
+        "label": "📰 သတင်းဖတ် အသံ (မြန်မြန်)",
+        "voice": "my-MM-ThihaNeural",
+        "rate": "+10%",
+        "pitch": "+0Hz"
+    }
 }
 
-# 4. Telegram Bot Handlers
+# 3. Telegram Bot Handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [InlineKeyboardButton("😊 Normal", callback_data="style_normal"), InlineKeyboardButton("📖 Story", callback_data="style_story")],
-        [InlineKeyboardButton("📰 News", callback_data="style_news"), InlineKeyboardButton("👻 Horror", callback_data="style_horror")]
+        [
+            InlineKeyboardButton("👩 မနိလာ", callback_data="style_female"),
+            InlineKeyboardButton("👨 မောင်သီဟ", callback_data="style_male"),
+        ],
+        [
+            InlineKeyboardButton("📖 ဇာတ်လမ်းပြော", callback_data="style_story"),
+            InlineKeyboardButton("📰 သတင်းဖတ်", callback_data="style_news"),
+        ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    current = context.user_data.get("style", "normal")
+    current = context.user_data.get("style", "female")
+    preset_label = VOICE_PRESETS[current]["label"]
+    
     await update.message.reply_text(
-        f"မင်္ဂလာပါ အစ်ကိုအောင်! Gemini AI Voice Bot မှ ကြိုဆိုပါတယ်။\n\nလက်ရှိ အသံ: **{VOICE_PRESETS[current]['label']}**\n\nစာသား ပို့ပေးပါဗျ။",
+        f"မင်္ဂလာပါ အစ်ကိုအောင်! SORA TTS Voice Bot မှ ကြိုဆိုပါတယ်။\n\n"
+        f"လက်ရှိ အသံ: **{preset_label}**\n\n"
+        f"စာသား ပို့ပေးပါ၊ ချက်ချင်း MP3 အသံဖိုင် ပြောင်းပေးပါမယ်ဗျာ။",
         reply_markup=reply_markup,
         parse_mode="Markdown"
     )
@@ -47,63 +73,38 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    
     data = query.data
     if data.startswith("style_"):
         style_key = data.replace("style_", "")
         if style_key in VOICE_PRESETS:
             context.user_data["style"] = style_key
-            await query.edit_message_text(f"✅ Voice Style ကို **{VOICE_PRESETS[style_key]['label']}** သို့ ပြောင်းလိုက်ပါပြီ။", parse_mode="Markdown")
+            preset_label = VOICE_PRESETS[style_key]["label"]
+            await query.edit_message_text(
+                f"✅ Voice Style ကို **{preset_label}** သို့ ပြောင်းလိုက်ပါပြီ။ စာသား ပို့ပေးနိုင်ပါပြီ။", 
+                parse_mode="Markdown"
+            )
 
 async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
-    current_style_key = context.user_data.get("style", "normal")
+    current_style_key = context.user_data.get("style", "female")
     preset = VOICE_PRESETS[current_style_key]
 
-    status_msg = await update.message.reply_text(f"🎙️ {preset['label']} ဖန်တီးနေပါတယ်... ခဏစောင့်ပါ...")
+    status_msg = await update.message.reply_text(f"🎙️ {preset['label']} ဖြင့် ဖတ်ပြနေပါတယ်... ခဏစောင့်ပါ...")
 
     try:
-        # AI ကို စကားပြန်မပြောဘဲ တိုက်ရိုက် အသံဖတ်စက်အဖြစ်သာ သတ်မှတ်ခြင်း
-        system_instruction = (
-            f"{preset['instruction']}\n"
-            "You are STRICTLY a Burmese Text-to-Speech (TTS) converter.\n"
-            "YOUR ONLY JOB IS TO READ THE USER'S TEXT OUT LOUD VERBATIM IN BURMESE.\n"
-            "RULES:\n"
-            "1. DO NOT reply to the text or answer questions.\n"
-            "2. DO NOT continue the story or invent new text.\n"
-            "3. Read ONLY the exact text inside the quotes word-for-word.\n"
-            "4. Ignore bracketed cues like (SFX: ...) or [Hook]."
+        # Edge TTS Stream ပြုလုပ်ခြင်း
+        communicate = edge_tts.Communicate(
+            text=user_text,
+            voice=preset["voice"],
+            rate=preset["rate"],
+            pitch=preset["pitch"]
         )
 
-        prompt_content = f"Read the following Burmese text out loud verbatim:\n\n\"{user_text}\""
-
-        safety_settings = [
-            types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HARASSMENT, threshold=types.HarmBlockThreshold.BLOCK_NONE),
-            types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold=types.HarmBlockThreshold.BLOCK_NONE),
-            types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold=types.HarmBlockThreshold.BLOCK_NONE),
-            types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold=types.HarmBlockThreshold.BLOCK_NONE),
-        ]
-
-        response = client.models.generate_content(
-            model="gemini-3.6-flash",
-            contents=prompt_content,
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                response_modalities=["AUDIO"],
-                speech_config=types.SpeechConfig(
-                    voice_config=types.VoiceConfig(
-                        prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=preset["voice"])
-                    )
-                ),
-                safety_settings=safety_settings
-            )
-        )
-
-        audio_bytes = None
-        if response.candidates and response.candidates[0].content.parts:
-            for part in response.candidates[0].content.parts:
-                if part.inline_data and part.inline_data.data:
-                    audio_bytes = part.inline_data.data
-                    break
+        audio_bytes = bytearray()
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                audio_bytes.extend(chunk["data"])
 
         if audio_bytes:
             audio_file = io.BytesIO(audio_bytes)
@@ -112,19 +113,18 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_audio(
                 audio=audio_file,
                 filename="voice_output.mp3",
-                caption=f"🎙️ Style: {preset['label']}",
+                caption=f"🎙️ Voice: {preset['label']}",
                 title=f"{preset['label']}",
-                performer="Gemini AI Studio"
+                performer="SORA Audio Studio"
             )
             await status_msg.delete()
         else:
-            finish_reason = response.candidates[0].finish_reason if response.candidates else "UNKNOWN"
-            await status_msg.edit_text(f"❌ Audio ဖိုင် ထွက်မလာပါဗျာ (Reason: {finish_reason})။")
+            await status_msg.edit_text("❌ Audio ဖိုင် ထွက်မလာပါဗျာ၊ စာသား ပြန်စစ်ပေးပါ။")
 
     except Exception as e:
         await status_msg.edit_text(f"❌ Error ဖြစ်သွားပါသည်: {str(e)}")
 
-# 5. Main Execution
+# 4. Main Execution
 def main():
     flask_thread = Thread(target=run_flask)
     flask_thread.daemon = True
