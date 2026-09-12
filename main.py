@@ -64,10 +64,13 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         clean_instruction = (
             f"{preset['instruction']} "
-            "Read ONLY the spoken Burmese text. Ignore any brackets, SFX cues like (SFX: ...) or [Hook]."
+            "Read ONLY the spoken Burmese text word-for-word. "
+            "Do NOT converse or reply to the user. Strictly ignore brackets like (SFX: ...) or [Hook]."
         )
 
-        # Safety Block မဖြစ်စေရန် လျှော့ပေးခြင်း
+        # AI ကို စကားပြန်မပြောဘဲ စာသားကိုပဲ တိုက်ရိုက်ဖတ်ပြရန် ညွှန်ကြားချက် သီးသန့်ထည့်ခြင်း
+        prompt_content = f"Please read the following text out loud word-for-word in Burmese. Do NOT reply or add commentary, just read this text:\n\n{user_text}"
+
         safety_settings = [
             types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HARASSMENT, threshold=types.HarmBlockThreshold.BLOCK_NONE),
             types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold=types.HarmBlockThreshold.BLOCK_NONE),
@@ -77,7 +80,7 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         response = client.models.generate_content(
             model="gemini-3.6-flash",
-            contents=user_text,
+            contents=prompt_content,
             config=types.GenerateContentConfig(
                 system_instruction=clean_instruction,
                 response_modalities=["AUDIO"],
@@ -91,11 +94,15 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         audio_bytes = None
+        text_reply = None
+
         if response.candidates and response.candidates[0].content.parts:
             for part in response.candidates[0].content.parts:
                 if part.inline_data:
                     audio_bytes = part.inline_data.data
                     break
+                elif part.text:
+                    text_reply = part.text
 
         if audio_bytes:
             audio_file = io.BytesIO(audio_bytes)
@@ -109,10 +116,11 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 performer="Gemini AI Studio"
             )
             await status_msg.delete()
+        elif text_reply:
+            await status_msg.edit_text(f"❌ AI က မဖတ်ပြဘဲ စကား ပြန်ပြောနေပါသည်: {text_reply[:100]}...\nစာသားကို ရိုးရှင်းအောင် အနည်းငယ် ပြင်ပေးပါ။")
         else:
-            # Block ဖြစ်သည့် အကြောင်းအရင်းကို အသေးစိတ် ပြသပေးခြင်း
             finish_reason = response.candidates[0].finish_reason if response.candidates else "UNKNOWN"
-            await status_msg.edit_text(f"❌ စာသားကြောင့် Block ဖြစ်သွားပါသည် (Reason: {finish_reason})။ စာသားကို အနည်းငယ် တိုပြီး ပြင်ပို့ပေးပါ။")
+            await status_msg.edit_text(f"❌ Audio မထွက်လာပါ (Reason: {finish_reason})။ စာသားကို အနည်းငယ် တိုပေးပါ။")
 
     except Exception as e:
         await status_msg.edit_text(f"❌ Error ဖြစ်သွားပါသည်: {str(e)}")
