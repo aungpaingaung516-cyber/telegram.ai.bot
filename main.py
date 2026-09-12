@@ -93,7 +93,6 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = await update.message.reply_text(f"🎙️ {preset['label']} အသံဖိုင် ဖန်တီးနေပါတယ်... ခဏစောင့်ပါ...")
 
     try:
-        # SFX နှင့် ကွင်းစကွင်းပိတ် ညွှန်ကြားချက်များကို အသံမဖတ်ရန် Prompt တွင် ထည့်သွင်းခြင်း
         clean_instruction = (
             f"{preset['instruction']} "
             "Read ONLY the spoken Burmese text. "
@@ -101,7 +100,7 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.6-flash",
             contents=user_text,
             config=types.GenerateContentConfig(
                 system_instruction=clean_instruction,
@@ -127,7 +126,6 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             audio_file = io.BytesIO(audio_bytes)
             audio_file.name = "voice_output.mp3"
 
-            # reply_audio ဖြင့် MP3 Audio File အဖြစ် ပြန်ပို့ပေးခြင်း
             await update.message.reply_audio(
                 audio=audio_file,
                 filename="voice_output.mp3",
@@ -144,12 +142,10 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # 5. Main Execution Block
 def main():
-    # Flask Web Server ကို Thread ဖြင့် သီးသန့် Run ခြင်း
     flask_thread = Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
 
-    # Telegram Bot Application စတင်ခြင်း
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
     application = Application.builder().token(bot_token).build()
 
