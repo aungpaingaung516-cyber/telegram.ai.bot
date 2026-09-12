@@ -62,14 +62,19 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = await update.message.reply_text(f"🎙️ {preset['label']} ဖန်တီးနေပါတယ်... ခဏစောင့်ပါ...")
 
     try:
-        clean_instruction = (
-            f"{preset['instruction']} "
-            "Read ONLY the spoken Burmese text word-for-word. "
-            "Do NOT converse or reply to the user. Strictly ignore brackets like (SFX: ...) or [Hook]."
+        # AI ကို စကားပြန်မပြောဘဲ တိုက်ရိုက် အသံဖတ်စက်အဖြစ်သာ သတ်မှတ်ခြင်း
+        system_instruction = (
+            f"{preset['instruction']}\n"
+            "You are STRICTLY a Burmese Text-to-Speech (TTS) converter.\n"
+            "YOUR ONLY JOB IS TO READ THE USER'S TEXT OUT LOUD VERBATIM IN BURMESE.\n"
+            "RULES:\n"
+            "1. DO NOT reply to the text or answer questions.\n"
+            "2. DO NOT continue the story or invent new text.\n"
+            "3. Read ONLY the exact text inside the quotes word-for-word.\n"
+            "4. Ignore bracketed cues like (SFX: ...) or [Hook]."
         )
 
-        # AI ကို စကားပြန်မပြောဘဲ စာသားကိုပဲ တိုက်ရိုက်ဖတ်ပြရန် ညွှန်ကြားချက် သီးသန့်ထည့်ခြင်း
-        prompt_content = f"Please read the following text out loud word-for-word in Burmese. Do NOT reply or add commentary, just read this text:\n\n{user_text}"
+        prompt_content = f"Read the following Burmese text out loud verbatim:\n\n\"{user_text}\""
 
         safety_settings = [
             types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HARASSMENT, threshold=types.HarmBlockThreshold.BLOCK_NONE),
@@ -82,7 +87,7 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             model="gemini-3.6-flash",
             contents=prompt_content,
             config=types.GenerateContentConfig(
-                system_instruction=clean_instruction,
+                system_instruction=system_instruction,
                 response_modalities=["AUDIO"],
                 speech_config=types.SpeechConfig(
                     voice_config=types.VoiceConfig(
@@ -94,15 +99,11 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         audio_bytes = None
-        text_reply = None
-
         if response.candidates and response.candidates[0].content.parts:
             for part in response.candidates[0].content.parts:
-                if part.inline_data:
+                if part.inline_data and part.inline_data.data:
                     audio_bytes = part.inline_data.data
                     break
-                elif part.text:
-                    text_reply = part.text
 
         if audio_bytes:
             audio_file = io.BytesIO(audio_bytes)
@@ -116,11 +117,9 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 performer="Gemini AI Studio"
             )
             await status_msg.delete()
-        elif text_reply:
-            await status_msg.edit_text(f"❌ AI က မဖတ်ပြဘဲ စကား ပြန်ပြောနေပါသည်: {text_reply[:100]}...\nစာသားကို ရိုးရှင်းအောင် အနည်းငယ် ပြင်ပေးပါ။")
         else:
             finish_reason = response.candidates[0].finish_reason if response.candidates else "UNKNOWN"
-            await status_msg.edit_text(f"❌ Audio မထွက်လာပါ (Reason: {finish_reason})။ စာသားကို အနည်းငယ် တိုပေးပါ။")
+            await status_msg.edit_text(f"❌ Audio ဖိုင် ထွက်မလာပါဗျာ (Reason: {finish_reason})။")
 
     except Exception as e:
         await status_msg.edit_text(f"❌ Error ဖြစ်သွားပါသည်: {str(e)}")
@@ -138,6 +137,7 @@ def main():
     application.add_handler(CallbackQueryHandler(button_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, generate_voice))
 
+    print("Telegram Bot application starting...")
     application.run_polling()
 
 if __name__ == '__main__':
