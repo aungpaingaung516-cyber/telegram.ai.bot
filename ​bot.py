@@ -1,5 +1,8 @@
 import io
+import os
 import logging
+from threading import Thread
+from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -12,18 +15,25 @@ from telegram.ext import (
 from google import genai
 from google.genai import types
 
-# ----------------- CONFIGURATION -----------------
-TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"  # @BotFather မှ ရရှိသော Token ထည့်ပါ
-GEMINI_API_KEY = "YOUR_GEMINI_API_KEY"          # AI Studio မှ API Key ထည့်ပါ
-# -------------------------------------------------
+# ----------------- RENDER HEALTH CHECK SERVER -----------------
+web_app = Flask(__name__)
 
-# Gemini Client ဖွင့်ခြင်း
+@web_app.route('/')
+def health_check():
+    return "Telegram Voice Bot is running perfectly!", 200
+
+def run_flask():
+    # Render မှပေးသော PORT ကို ရယူခြင်း (Default 8080)
+    port = int(os.environ.get("PORT", 8080))
+    web_app.run(host="0.0.0.0", port=port)
+# -------------------------------------------------------------
+
+# Environment Variables မှ API Keys များကို ဖတ်ယူခြင်း
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+
 client = genai.Client(api_key=GEMINI_API_KEY)
-
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 # မြန်မာလို ပိပိသသ အသံထွက်စေမည့် Voice Presets များ
 VOICE_PRESETS = {
@@ -63,7 +73,6 @@ VOICE_PRESETS = {
 }
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Default Style အဖြစ် Normal ကို သတ်မှတ်ထားမည်
     if "style" not in context.user_data:
         context.user_data["style"] = "normal"
 
@@ -101,7 +110,6 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = await update.message.reply_text(f"🎙️ {preset['label']} အသံဖိုင် ဖန်တီးနေပါတယ်... ခဏစောင့်ပါ...")
 
     try:
-        # Gemini 2.0 Flash ဖြင့် Audio Output တောင်းဆိုခြင်း
         response = client.models.generate_content(
             model="gemini-2.0-flash",
             contents=user_text,
@@ -125,7 +133,6 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 break
 
         if audio_bytes:
-            # Memory ထဲမှ Audio Data ကို Telegram Voice Message အဖြစ် ပြောင်းလဲခြင်း
             audio_file = io.BytesIO(audio_bytes)
             audio_file.name = "voice_output.wav"
 
@@ -141,11 +148,16 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text(f"❌ Error ဖြစ်သွားပါသည်: {str(e)}")
 
 if __name__ == '__main__':
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    # Flask Server ကို နောက်ကွယ် Thread တွင် မောင်းနှင်ခြင်း
+    server_thread = Thread(target=run_flask)
+    server_thread.daemon = True
+    server_thread.start()
 
+    # Telegram Bot ကို စတင်ခြင်း
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_click))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, generate_voice))
 
-    print("Bot စတင်ပွင့်နေပါပြီ...")
+    print("Bot မောင်းနှင်နေပါပြီ...")
     app.run_polling()
