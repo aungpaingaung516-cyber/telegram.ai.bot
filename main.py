@@ -1,106 +1,89 @@
-import io
 import os
-import logging
+import io
 from threading import Thread
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    ContextTypes,
-    MessageHandler,
-    CallbackQueryHandler,
-    filters
-)
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 from google import genai
 from google.genai import types
 
-# ----------------- RENDER HEALTH CHECK SERVER -----------------
-web_app = Flask(__name__)
+# 1. Flask Web Server Setup (Render Health Check မပြုတ်စေရန်)
+app = Flask(__name__)
 
-@web_app.route('/')
+@app.route('/')
 def health_check():
-    return "Telegram Voice Bot is running perfectly!", 200
+    return "Bot is live and running!", 200
 
 def run_flask():
-    # Render မှပေးသော PORT ကို ရယူခြင်း (Default 8080)
-    port = int(os.environ.get("PORT", 8080))
-    web_app.run(host="0.0.0.0", port=port)
-# -------------------------------------------------------------
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
 
-# Environment Variables မှ API Keys များကို ဖတ်ယူခြင်း
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+# 2. Gemini API Client Setup
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-
 client = genai.Client(api_key=GEMINI_API_KEY)
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# မြန်မာလို ပိပိသသ အသံထွက်စေမည့် Voice Presets များ
+# 3. Voice Presets Configuration
 VOICE_PRESETS = {
     "normal": {
-        "label": "😊 Normal / သာမန် စကားပြော",
-        "voice": "Kore",
-        "instruction": (
-            "You are a native Burmese speaker. Read the provided Burmese text out loud "
-            "with crystal clear, highly accurate Burmese pronunciation, natural native rhythm, "
-            "and fluent voice intonation. Avoid robotic tone."
-        )
+        "label": "😊 ရိုးရိုး အသံ",
+        "voice": "Puck",
+        "instruction": "Speak naturally in clear Burmese."
     },
     "story": {
-        "label": "📖 Story / ပုံပြင်ပြော",
-        "voice": "Puck",
-        "instruction": (
-            "You are a native Burmese storyteller. Read the Burmese text with captivating emotion, "
-            "expressive tone, correct sentence pauses, and clear native pronunciation."
-        )
+        "label": "📖 ဇာတ်လမ်းပြော အသံ",
+        "voice": "Charon",
+        "instruction": "Speak like an engaging Burmese story narrator with dramatic and emotional tone."
     },
     "news": {
-        "label": "🎙️ News / သတင်းဖတ်",
-        "voice": "Fenrir",
-        "instruction": (
-            "You are a professional Burmese news broadcaster. Read the Burmese text with "
-            "formal, articulate, precise, and crisp native Burmese pronunciation."
-        )
+        "label": "📰 သတင်းဖတ် အသံ",
+        "voice": "Kore",
+        "instruction": "Speak like a professional Burmese news anchor."
     },
     "horror": {
-        "label": "👻 Horror / ခြောက်ခြားဖွယ်",
-        "voice": "Charon",
-        "instruction": (
-            "You are a terrifying Burmese horror narrator. Read the Burmese text in a dark, "
-            "slow, eerie whisper with chilling pauses, while maintaining clear Burmese articulation."
-        )
+        "label": "👻 ထိတ်လန့်/သရဲဇာတ်လမ်း အသံ",
+        "voice": "Fenrir",
+        "instruction": "Speak in a creepy, slow, horror-themed narrative voice in Burmese."
     }
 }
 
+# 4. Telegram Bot Handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if "style" not in context.user_data:
-        context.user_data["style"] = "normal"
-
     keyboard = [
-        [InlineKeyboardButton(data["label"], callback_data=key)]
-        for key, data in VOICE_PRESETS.items()
+        [
+            InlineKeyboardButton("😊 Normal", callback_data="style_normal"),
+            InlineKeyboardButton("📖 Story", callback_data="style_story"),
+        ],
+        [
+            InlineKeyboardButton("📰 News", callback_data="style_news"),
+            InlineKeyboardButton("👻 Horror", callback_data="style_horror"),
+        ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-
+    current = context.user_data.get("style", "normal")
+    preset_label = VOICE_PRESETS[current]["label"]
+    
     await update.message.reply_text(
-        "မင်္ဂလာပါ အစ်ကိုအောင်! AI Voice Generator Bot မှ ကြိုဆိုပါတယ် 🎙️\n\n"
-        "လိုချင်သည့် **Voice Style** ကို အောက်ပါ ခလုတ်များတွင် ရွေးချယ်ပြီး မြန်မာစာသား ပို့ပေးပါ-",
+        f"မင်္ဂလာပါ အစ်ကိုအောင်! Gemini AI Voice Bot မှ ကြိုဆိုပါတယ်။\n\n"
+        f"လက်ရှိ ရွေးချယ်ထားသော အသံ: **{preset_label}**\n\n"
+        f"အောက်ပါ Button များမှ အသံ Style ပြောင်းနိုင်ပြီး၊ အသံပြောင်းချင်သည့် စာသားကို ပို့ပေးပါဗျ။",
         reply_markup=reply_markup,
         parse_mode="Markdown"
     )
 
-async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
-    selected_style = query.data
-    context.user_data["style"] = selected_style
-    preset_name = VOICE_PRESETS[selected_style]["label"]
-
-    await query.edit_message_text(
-        f"✅ **{preset_name}** စတိုင်ကို ရွေးချယ်ထားပါသည်။ အသံထုတ်ချင်သည့် စာသား ပို့ပေးပါဗျ။",
-        parse_mode="Markdown"
-    )
+    
+    data = query.data
+    if data.startswith("style_"):
+        style_key = data.replace("style_", "")
+        if style_key in VOICE_PRESETS:
+            context.user_data["style"] = style_key
+            preset_label = VOICE_PRESETS[style_key]["label"]
+            await query.edit_message_text(
+                f"✅ Voice Style ကို **{preset_label}** သို့ ပြောင်းလဲလိုက်ပါပြီ။ စာသား ပို့ပေးနိုင်ပါပြီ။", 
+                parse_mode="Markdown"
+            )
 
 async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
@@ -110,11 +93,18 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = await update.message.reply_text(f"🎙️ {preset['label']} အသံဖိုင် ဖန်တီးနေပါတယ်... ခဏစောင့်ပါ...")
 
     try:
+        # SFX နှင့် ကွင်းစကွင်းပိတ် ညွှန်ကြားချက်များကို အသံမဖတ်ရန် Prompt တွင် ထည့်သွင်းခြင်း
+        clean_instruction = (
+            f"{preset['instruction']} "
+            "Read ONLY the spoken Burmese text. "
+            "STRICTLY IGNORE and DO NOT read any bracketed directions, SFX cues, or background notes like (SFX: ...) or [Hook]."
+        )
+
         response = client.models.generate_content(
-            model="gemini-3.6-flash",
+            model="gemini-2.5-flash",
             contents=user_text,
             config=types.GenerateContentConfig(
-                system_instruction=preset["instruction"],
+                system_instruction=clean_instruction,
                 response_modalities=["AUDIO"],
                 speech_config=types.SpeechConfig(
                     voice_config=types.VoiceConfig(
@@ -127,18 +117,23 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         audio_bytes = None
-        for part in response.candidates[0].content.parts:
-            if part.inline_data:
-                audio_bytes = part.inline_data.data
-                break
+        if response.candidates and response.candidates[0].content.parts:
+            for part in response.candidates[0].content.parts:
+                if part.inline_data:
+                    audio_bytes = part.inline_data.data
+                    break
 
         if audio_bytes:
             audio_file = io.BytesIO(audio_bytes)
-            audio_file.name = "voice_output.wav"
+            audio_file.name = "voice_output.mp3"
 
-            await update.message.reply_voice(
-                voice=audio_file,
-                caption=f"🎙️ Style: {preset['label']}"
+            # reply_audio ဖြင့် MP3 Audio File အဖြစ် ပြန်ပို့ပေးခြင်း
+            await update.message.reply_audio(
+                audio=audio_file,
+                filename="voice_output.mp3",
+                caption=f"🎙️ Style: {preset['label']}",
+                title=f"{preset['label']}",
+                performer="Gemini AI Studio"
             )
             await status_msg.delete()
         else:
@@ -147,17 +142,23 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await status_msg.edit_text(f"❌ Error ဖြစ်သွားပါသည်: {str(e)}")
 
+# 5. Main Execution Block
+def main():
+    # Flask Web Server ကို Thread ဖြင့် သီးသန့် Run ခြင်း
+    flask_thread = Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+
+    # Telegram Bot Application စတင်ခြင်း
+    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    application = Application.builder().token(bot_token).build()
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(button_callback))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, generate_voice))
+
+    print("Telegram Bot application starting...")
+    application.run_polling()
+
 if __name__ == '__main__':
-    # Flask Server ကို နောက်ကွယ် Thread တွင် မောင်းနှင်ခြင်း
-    server_thread = Thread(target=run_flask)
-    server_thread.daemon = True
-    server_thread.start()
-
-    # Telegram Bot ကို စတင်ခြင်း
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button_click))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, generate_voice))
-
-    print("Bot မောင်းနှင်နေပါပြီ...")
-    app.run_polling()
+    main()
