@@ -1,13 +1,13 @@
 import os
 import io
 import struct
-import requests
 from threading import Thread
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 from google import genai
 from google.genai import types
+from huggingface_hub import InferenceClient
 
 # ---------------------------------------------------------
 # 1. Flask Web Server Setup (Render Health Check)
@@ -23,12 +23,13 @@ def run_flask():
     app.run(host="0.0.0.0", port=port)
 
 # ---------------------------------------------------------
-# 2. Environment Variables & API Setup
+# 2. Environment Variables & API Clients Setup
 # ---------------------------------------------------------
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 HF_TOKEN = os.environ.get("HF_TOKEN")  # Hugging Face Access Token
 
 client = genai.Client(api_key=GEMINI_API_KEY)
+hf_client = InferenceClient(token=HF_TOKEN)
 
 # ---------------------------------------------------------
 # 3. Presets Configuration
@@ -84,18 +85,14 @@ def convert_to_wav(audio_data: bytes, mime_type: str) -> bytes:
     return header + audio_data
 
 # ---------------------------------------------------------
-# 5. Hugging Face Music Generation Function
+# 5. Hugging Face Music Generation (Using InferenceClient)
 # ---------------------------------------------------------
 def query_hf_musicgen(prompt_text: str) -> bytes:
-    API_URL = "https://api-inference.huggingface.co/models/facebook/musicgen-small"
-    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-    payload = {"inputs": prompt_text}
-    
-    response = requests.post(API_URL, headers=headers, json=payload, timeout=90)
-    if response.status_code == 200:
-        return response.content
-    else:
-        raise Exception(f"HF API Error ({response.status_code}): {response.text}")
+    audio_bytes = hf_client.text_to_audio(
+        prompt=prompt_text,
+        model="facebook/musicgen-small"
+    )
+    return audio_bytes
 
 # ---------------------------------------------------------
 # 6. Telegram Bot Handlers
@@ -181,7 +178,7 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await status_msg.delete()
             return
 
-        # 2. Gemini Flash TTS Models (Voice & Singing)
+        # 2. Gemini Flash TTS Models
         model = "gemini-3.1-flash-tts-preview"
         if preset.get("is_singing"):
             prompt_input = (
