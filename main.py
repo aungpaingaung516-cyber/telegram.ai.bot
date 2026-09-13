@@ -24,13 +24,14 @@ def run_flask():
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# 3. Voice Presets Configuration
+# 3. Voice & Music Presets Configuration
 VOICE_PRESETS = {
-    "zephyr": {"label": "✨ Zephyr", "voice": "Zephyr"},
-    "puck": {"label": "😊 Puck", "voice": "Puck"},
-    "charon": {"label": "📖 Charon", "voice": "Charon"},
-    "kore": {"label": "📰 Kore", "voice": "Kore"},
-    "fenrir": {"label": "👻 Fenrir", "voice": "Fenrir"}
+    "zephyr": {"label": "✨ Zephyr (အမျိုးသမီး)", "voice": "Zephyr", "type": "tts", "is_singing": False},
+    "puck": {"label": "😊 Puck (အမျိုးသား)", "voice": "Puck", "type": "tts", "is_singing": False},
+    "charon": {"label": "📖 Charon (အေးဆေး)", "voice": "Charon", "type": "tts", "is_singing": False},
+    "kore": {"label": "📰 Kore (သတင်းဖတ်)", "voice": "Kore", "type": "tts", "is_singing": False},
+    "singing": {"label": "🎶 သီချင်းဆိုသံ (Singing Mode)", "voice": "Zephyr", "type": "tts", "is_singing": True},
+    "lyria": {"label": "🎸 Lyria AI Music Generator", "type": "lyria"}
 }
 
 # 4. Helper Functions for WAV Header & PCM Conversion
@@ -78,17 +79,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     keyboard = [
         [InlineKeyboardButton("✨ Zephyr", callback_data="style_zephyr"), InlineKeyboardButton("😊 Puck", callback_data="style_puck")],
-        [InlineKeyboardButton("📖 Charon", callback_data="style_charon"), InlineKeyboardButton("📰 Kore", callback_data="style_kore")]
+        [InlineKeyboardButton("📖 Charon", callback_data="style_charon"), InlineKeyboardButton("📰 Kore", callback_data="style_kore")],
+        [InlineKeyboardButton("🎶 သီချင်းဆိုသံ (Singing Mode)", callback_data="style_singing")],
+        [InlineKeyboardButton("🎸 Lyria AI Music Generator", callback_data="style_lyria")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     current = context.user_data.get("style", "zephyr")
     preset_label = VOICE_PRESETS[current]["label"]
     
     msg = (
-        f"မင်္ဂလာပါ အစ်ကိုအောင်! Gemini 3.1 Flash TTS Bot မှ ကြိုဆိုပါတယ်။ ✨\n\n"
-        f"လက်ရှိ အသံ: **{preset_label}**\n\n"
+        f"မင်္ဂလာပါ အစ်ကိုအောင်! Gemini & Lyria Studio Bot မှ ကြိုဆိုပါတယ်။ ✨\n\n"
+        f"လက်ရှိ Mode: **{preset_label}**\n\n"
         f"💡 **Group ထဲတွင် သုံးနည်း:**\n"
-        f"Bot ရဲ့ စာကို **Reply** ပြန်ပြီး စာရေးမှသာ အသံထွက်ပေးပါမည်။\n\n"
+        f"Bot ရဲ့ စာကို **Reply** ပြန်ပြီး စာရေးမှသာ အသံ/သီချင်း ထုတ်ပေးပါမည်။\n\n"
+        f"🎸 **Lyria သီချင်းထုတ်လိုပါက:** '🎸 Lyria AI Music Generator' Button ကို နှိပ်ပြီး မိမိလိုချင်သော သီချင်းပုံစံ (Prompt) ပို့ပေးပါ။\n\n"
         f"🛑 ရပ်လိုပါက `/stop`၊ ပြန်ဖွင့်လိုပါက `/start` ဟု ပို့ပါ။"
     )
     await update.message.reply_text(msg, reply_markup=reply_markup, parse_mode="Markdown")
@@ -105,7 +109,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         style_key = data.replace("style_", "")
         if style_key in VOICE_PRESETS:
             context.user_data["style"] = style_key
-            await query.edit_message_text(f"✅ Voice Style ကို **{VOICE_PRESETS[style_key]['label']}** သို့ ပြောင်းလိုက်ပါပြီ။", parse_mode="Markdown")
+            await query.edit_message_text(f"✅ Mode ကို **{VOICE_PRESETS[style_key]['label']}** သို့ ပြောင်းလိုက်ပါပြီ။", parse_mode="Markdown")
 
 async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.chat_data.get("disabled", False):
@@ -128,29 +132,52 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     preset = VOICE_PRESETS[current_style_key]
 
     status_msg = await update.message.reply_text(
-        f"🎙️ Gemini Flash TTS ({preset['label']}) ဖြင့် အသံပြောင်းနေပါတယ်... ခဏစောင့်ပါ...",
+        f"🎙️ {preset['label']} ဖြင့် ပြုလုပ်နေပါတယ်... ခဏစောင့်ပါ...",
         reply_to_message_id=update.message.message_id
     )
 
     try:
-        model = "gemini-3.1-flash-tts-preview"
-        contents = [
-            types.Content(
-                role="user",
-                parts=[types.Part.from_text(text=user_text)],
-            ),
-        ]
-        generate_content_config = types.GenerateContentConfig(
-            temperature=1,
-            response_modalities=["audio"],
-            speech_config=types.SpeechConfig(
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name=preset["voice"]
-                    )
+        # Lyria Model (Music Generation)
+        if preset.get("type") == "lyria":
+            model = "lyria-3-pro-preview"
+            contents = [
+                types.Content(
+                    role="user",
+                    parts=[types.Part.from_text(text=user_text)],
+                ),
+            ]
+            generate_content_config = types.GenerateContentConfig(
+                response_modalities=["audio"],
+            )
+
+        # Gemini Flash TTS Model (Voice & Speech)
+        else:
+            model = "gemini-3.1-flash-tts-preview"
+            if preset.get("is_singing"):
+                prompt_input = (
+                    f"Sing the following lyrics like a song with rhythm, melody, and musical pitch. "
+                    f"Do not just read it, express it naturally like a singer: {user_text}"
                 )
-            ),
-        )
+            else:
+                prompt_input = user_text
+
+            contents = [
+                types.Content(
+                    role="user",
+                    parts=[types.Part.from_text(text=prompt_input)],
+                ),
+            ]
+            generate_content_config = types.GenerateContentConfig(
+                temperature=1,
+                response_modalities=["audio"],
+                speech_config=types.SpeechConfig(
+                    voice_config=types.VoiceConfig(
+                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                            voice_name=preset["voice"]
+                        )
+                    )
+                ),
+            )
 
         audio_data = bytearray()
         mime_type = ""
@@ -167,16 +194,24 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 mime_type = inline_data.mime_type
 
         if audio_data:
-            wav_bytes = convert_to_wav(bytes(audio_data), mime_type)
-            audio_file = io.BytesIO(wav_bytes)
-            audio_file.name = "voice_output.wav"
+            # Check mime type and handle WAV conversion if needed
+            ext = mimetypes.guess_extension(mime_type) if mime_type else ".wav"
+            if not ext or "L16" in mime_type:
+                wav_bytes = convert_to_wav(bytes(audio_data), mime_type)
+                audio_file = io.BytesIO(wav_bytes)
+                file_name = "output.wav"
+            else:
+                audio_file = io.BytesIO(bytes(audio_data))
+                file_name = f"output{ext}"
+
+            audio_file.name = file_name
 
             await update.message.reply_audio(
                 audio=audio_file,
-                filename="voice_output.wav",
-                caption=f"🎙️ Voice: {preset['label']}",
+                filename=file_name,
+                caption=f"🎵 Mode: {preset['label']}",
                 title=f"{preset['label']}",
-                performer="Gemini TTS Studio",
+                performer="Gemini/Lyria Studio",
                 reply_to_message_id=update.message.message_id
             )
             await status_msg.delete()
