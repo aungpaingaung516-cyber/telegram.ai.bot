@@ -85,11 +85,12 @@ def convert_to_wav(audio_data: bytes, mime_type: str) -> bytes:
     return header + audio_data
 
 # ---------------------------------------------------------
-# 5. Hugging Face Music Generation (Using InferenceClient)
+# 5. Hugging Face Music Generation (Fixed for InferenceClient)
 # ---------------------------------------------------------
 def query_hf_musicgen(prompt_text: str) -> bytes:
-    audio_bytes = hf_client.text_to_audio(
-        prompt=prompt_text,
+    # InferenceClient တွင် text_to_speech ကို အသုံးပြုရပါသည်
+    audio_bytes = hf_client.text_to_speech(
+        text=prompt_text,
         model="facebook/musicgen-small"
     )
     return audio_bytes
