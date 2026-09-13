@@ -1,7 +1,7 @@
 import os
 import io
 import struct
-import mimetypes
+import requests
 from threading import Thread
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -9,7 +9,9 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 from google import genai
 from google.genai import types
 
+# ---------------------------------------------------------
 # 1. Flask Web Server Setup (Render Health Check)
+# ---------------------------------------------------------
 app = Flask(__name__)
 
 @app.route('/')
@@ -20,21 +22,29 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
 
-# 2. Gemini API Client Setup
+# ---------------------------------------------------------
+# 2. Environment Variables & API Setup
+# ---------------------------------------------------------
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+HF_TOKEN = os.environ.get("HF_TOKEN")  # Hugging Face Access Token
+
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# 3. Voice & Music Presets Configuration
+# ---------------------------------------------------------
+# 3. Presets Configuration
+# ---------------------------------------------------------
 VOICE_PRESETS = {
     "zephyr": {"label": "✨ Zephyr (အမျိုးသမီး)", "voice": "Zephyr", "type": "tts", "is_singing": False},
     "puck": {"label": "😊 Puck (အမျိုးသား)", "voice": "Puck", "type": "tts", "is_singing": False},
     "charon": {"label": "📖 Charon (အေးဆေး)", "voice": "Charon", "type": "tts", "is_singing": False},
     "kore": {"label": "📰 Kore (သတင်းဖတ်)", "voice": "Kore", "type": "tts", "is_singing": False},
     "singing": {"label": "🎶 သီချင်းဆိုသံ (Singing Mode)", "voice": "Zephyr", "type": "tts", "is_singing": True},
-    "lyria": {"label": "🎸 Lyria AI Music Generator", "type": "lyria"}
+    "musicgen": {"label": "🎸 HuggingFace MusicGen (Free Music)", "type": "hf_music"}
 }
 
-# 4. Helper Functions for WAV Header & PCM Conversion
+# ---------------------------------------------------------
+# 4. Helper Functions for PCM to WAV Conversion
+# ---------------------------------------------------------
 def parse_audio_mime_type(mime_type: str) -> dict[str, int]:
     bits_per_sample = 16
     rate = 24000
@@ -73,7 +83,23 @@ def convert_to_wav(audio_data: bytes, mime_type: str) -> bytes:
     )
     return header + audio_data
 
-# 5. Telegram Bot Handlers
+# ---------------------------------------------------------
+# 5. Hugging Face Music Generation Function
+# ---------------------------------------------------------
+def query_hf_musicgen(prompt_text: str) -> bytes:
+    API_URL = "https://api-inference.huggingface.co/models/facebook/musicgen-small"
+    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+    payload = {"inputs": prompt_text}
+    
+    response = requests.post(API_URL, headers=headers, json=payload, timeout=90)
+    if response.status_code == 200:
+        return response.content
+    else:
+        raise Exception(f"HF API Error ({response.status_code}): {response.text}")
+
+# ---------------------------------------------------------
+# 6. Telegram Bot Handlers
+# ---------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.chat_data["disabled"] = False
     
@@ -81,18 +107,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("✨ Zephyr", callback_data="style_zephyr"), InlineKeyboardButton("😊 Puck", callback_data="style_puck")],
         [InlineKeyboardButton("📖 Charon", callback_data="style_charon"), InlineKeyboardButton("📰 Kore", callback_data="style_kore")],
         [InlineKeyboardButton("🎶 သီချင်းဆိုသံ (Singing Mode)", callback_data="style_singing")],
-        [InlineKeyboardButton("🎸 Lyria AI Music Generator", callback_data="style_lyria")]
+        [InlineKeyboardButton("🎸 HuggingFace MusicGen (Free Music)", callback_data="style_musicgen")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     current = context.user_data.get("style", "zephyr")
     preset_label = VOICE_PRESETS[current]["label"]
     
     msg = (
-        f"မင်္ဂလာပါ အစ်ကိုအောင်! Gemini & Lyria Studio Bot မှ ကြိုဆိုပါတယ်။ ✨\n\n"
+        f"မင်္ဂလာပါ အစ်ကိုအောင်! Gemini & HuggingFace Studio Bot မှ ကြိုဆိုပါတယ်။ ✨\n\n"
         f"လက်ရှိ Mode: **{preset_label}**\n\n"
-        f"💡 **Group ထဲတွင် သုံးနည်း:**\n"
-        f"Bot ရဲ့ စာကို **Reply** ပြန်ပြီး စာရေးမှသာ အသံ/သီချင်း ထုတ်ပေးပါမည်။\n\n"
-        f"🎸 **Lyria သီချင်းထုတ်လိုပါက:** '🎸 Lyria AI Music Generator' Button ကို နှိပ်ပြီး မိမိလိုချင်သော သီချင်းပုံစံ (Prompt) ပို့ပေးပါ။\n\n"
+        f"💡 **အသုံးပြုနည်း:**\n"
+        f"• စာရိုက်ပို့ပါက ရွေးချယ်ထားသော Mode အတိုင်း ထုတ်ပေးပါမည်။\n"
+        f"• Group ထဲတွင် သုံးပါက Bot စာကို Reply ပြန်ပြီး စာရေးပေးပါ။\n\n"
+        f"🎸 **Free AI Music ထုတ်ရန်:** '🎸 HuggingFace MusicGen' ကို နှိပ်ပြီး မိမိလိုချင်သော တေးဂီတ ပုံစံ (ဥပမာ `lofi hip hop beat with piano`) ကို စာရိုက်ပို့ပါ။\n\n"
         f"🛑 ရပ်လိုပါက `/stop`၊ ပြန်ဖွင့်လိုပါက `/start` ဟု ပို့ပါ။"
     )
     await update.message.reply_text(msg, reply_markup=reply_markup, parse_mode="Markdown")
@@ -137,47 +164,50 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     try:
-        # Lyria Model (Music Generation)
-        if preset.get("type") == "lyria":
-            model = "lyria-3-pro-preview"
-            contents = [
-                types.Content(
-                    role="user",
-                    parts=[types.Part.from_text(text=user_text)],
-                ),
-            ]
-            generate_content_config = types.GenerateContentConfig(
-                response_modalities=["audio"],
-            )
+        # 1. Hugging Face Free Music Generation
+        if preset.get("type") == "hf_music":
+            audio_bytes = query_hf_musicgen(user_text)
+            audio_file = io.BytesIO(audio_bytes)
+            audio_file.name = "generated_music.flac"
 
-        # Gemini Flash TTS Model (Voice & Speech)
+            await update.message.reply_audio(
+                audio=audio_file,
+                filename="generated_music.flac",
+                caption=f"🎵 Prompt: {user_text}\n🎸 Mode: {preset['label']}",
+                title="AI Generated Music",
+                performer="Hugging Face MusicGen",
+                reply_to_message_id=update.message.message_id
+            )
+            await status_msg.delete()
+            return
+
+        # 2. Gemini Flash TTS Models (Voice & Singing)
+        model = "gemini-3.1-flash-tts-preview"
+        if preset.get("is_singing"):
+            prompt_input = (
+                f"Sing the following lyrics like a song with rhythm, melody, and musical pitch. "
+                f"Do not just read it, express it naturally like a singer: {user_text}"
+            )
         else:
-            model = "gemini-3.1-flash-tts-preview"
-            if preset.get("is_singing"):
-                prompt_input = (
-                    f"Sing the following lyrics like a song with rhythm, melody, and musical pitch. "
-                    f"Do not just read it, express it naturally like a singer: {user_text}"
-                )
-            else:
-                prompt_input = user_text
+            prompt_input = user_text
 
-            contents = [
-                types.Content(
-                    role="user",
-                    parts=[types.Part.from_text(text=prompt_input)],
-                ),
-            ]
-            generate_content_config = types.GenerateContentConfig(
-                temperature=1,
-                response_modalities=["audio"],
-                speech_config=types.SpeechConfig(
-                    voice_config=types.VoiceConfig(
-                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                            voice_name=preset["voice"]
-                        )
+        contents = [
+            types.Content(
+                role="user",
+                parts=[types.Part.from_text(text=prompt_input)],
+            ),
+        ]
+        generate_content_config = types.GenerateContentConfig(
+            temperature=1,
+            response_modalities=["audio"],
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                        voice_name=preset["voice"]
                     )
-                ),
-            )
+                )
+            ),
+        )
 
         audio_data = bytearray()
         mime_type = ""
@@ -194,24 +224,16 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 mime_type = inline_data.mime_type
 
         if audio_data:
-            # Check mime type and handle WAV conversion if needed
-            ext = mimetypes.guess_extension(mime_type) if mime_type else ".wav"
-            if not ext or "L16" in mime_type:
-                wav_bytes = convert_to_wav(bytes(audio_data), mime_type)
-                audio_file = io.BytesIO(wav_bytes)
-                file_name = "output.wav"
-            else:
-                audio_file = io.BytesIO(bytes(audio_data))
-                file_name = f"output{ext}"
-
-            audio_file.name = file_name
+            wav_bytes = convert_to_wav(bytes(audio_data), mime_type)
+            audio_file = io.BytesIO(wav_bytes)
+            audio_file.name = "voice_output.wav"
 
             await update.message.reply_audio(
                 audio=audio_file,
-                filename=file_name,
-                caption=f"🎵 Mode: {preset['label']}",
+                filename="voice_output.wav",
+                caption=f"🎙️ Voice Mode: {preset['label']}",
                 title=f"{preset['label']}",
-                performer="Gemini/Lyria Studio",
+                performer="Gemini Audio Studio",
                 reply_to_message_id=update.message.message_id
             )
             await status_msg.delete()
@@ -221,7 +243,9 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await status_msg.edit_text(f"❌ Error ဖြစ်သွားပါသည်: {str(e)}")
 
-# 6. Main Execution
+# ---------------------------------------------------------
+# 7. Main Execution
+# ---------------------------------------------------------
 def main():
     flask_thread = Thread(target=run_flask)
     flask_thread.daemon = True
