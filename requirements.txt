@@ -2,3 +2,4 @@ python-telegram-bot
 google-genai
 requests
 flask
+huggingface_hub
