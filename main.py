@@ -84,31 +84,22 @@ def convert_to_wav(audio_data: bytes, mime_type: str) -> bytes:
     return header + audio_data
 
 # ---------------------------------------------------------
-# 5. Robust Hugging Face Music Generation (With URL Fallback)
+# 5. Robust Hugging Face Music Generation
 # ---------------------------------------------------------
 def query_hf_musicgen(prompt_text: str) -> bytes:
-    # Hugging Face Updated Router Endpoint & Legacy Fallback
-    urls = [
-        "https://router.huggingface.co/hf-inference/models/facebook/musicgen-small",
-        "https://api-inference.huggingface.co/models/facebook/musicgen-small"
-    ]
+    url = "https://router.huggingface.co/hf-inference/models/facebook/musicgen-small"
     headers = {}
     if HF_TOKEN:
         headers["Authorization"] = f"Bearer {HF_TOKEN}"
     
-    last_error = ""
-    for url in urls:
-        try:
-            response = requests.post(url, headers=headers, json={"inputs": prompt_text}, timeout=45)
-            if response.status_code == 200:
-                return response.content
-            else:
-                last_error = f"Status {response.status_code}: {response.text}"
-        except Exception as err:
-            last_error = str(err)
-            continue
-            
-    raise Exception(f"HF Server Connection Failed: {last_error}")
+    try:
+        response = requests.post(url, headers=headers, json={"inputs": prompt_text}, timeout=60)
+        if response.status_code == 200:
+            return response.content
+        else:
+            raise Exception(f"HF Server Error ({response.status_code}): {response.text}")
+    except requests.exceptions.RequestException as e:
+        raise Exception(f"ဆာဗာ ချိတ်ဆက်မှု လိုင်းမငြိမ်ပါ ({type(e).__name__})။ ခဏအကြာမှ ပြန်စမ်းပေးပါ။")
 
 # ---------------------------------------------------------
 # 6. Telegram Bot Handlers
