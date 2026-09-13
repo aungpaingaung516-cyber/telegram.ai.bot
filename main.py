@@ -84,20 +84,31 @@ def convert_to_wav(audio_data: bytes, mime_type: str) -> bytes:
     return header + audio_data
 
 # ---------------------------------------------------------
-# 5. Direct Requests-based Hugging Face Music Generation
+# 5. Robust Hugging Face Music Generation (With URL Fallback)
 # ---------------------------------------------------------
 def query_hf_musicgen(prompt_text: str) -> bytes:
-    API_URL = "https://api-inference.huggingface.co/models/facebook/musicgen-small"
+    # Hugging Face Updated Router Endpoint & Legacy Fallback
+    urls = [
+        "https://router.huggingface.co/hf-inference/models/facebook/musicgen-small",
+        "https://api-inference.huggingface.co/models/facebook/musicgen-small"
+    ]
     headers = {}
     if HF_TOKEN:
         headers["Authorization"] = f"Bearer {HF_TOKEN}"
     
-    response = requests.post(API_URL, headers=headers, json={"inputs": prompt_text}, timeout=60)
-    
-    if response.status_code != 200:
-        raise Exception(f"HF Error ({response.status_code}): {response.text}")
-        
-    return response.content
+    last_error = ""
+    for url in urls:
+        try:
+            response = requests.post(url, headers=headers, json={"inputs": prompt_text}, timeout=45)
+            if response.status_code == 200:
+                return response.content
+            else:
+                last_error = f"Status {response.status_code}: {response.text}"
+        except Exception as err:
+            last_error = str(err)
+            continue
+            
+    raise Exception(f"HF Server Connection Failed: {last_error}")
 
 # ---------------------------------------------------------
 # 6. Telegram Bot Handlers
