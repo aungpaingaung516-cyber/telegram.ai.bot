@@ -2,7 +2,7 @@ import os
 import io
 import struct
 import asyncio
-import replicate
+from huggingface_hub import InferenceClient
 from threading import Thread
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -17,7 +17,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def health_check():
-    return "Bot is live and running with Replicate & Gemini!", 200
+    return "Bot is live and running with Hugging Face & Gemini!", 200
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
@@ -27,12 +27,10 @@ def run_flask():
 # 2. Environment Variables & API Clients Setup
 # ---------------------------------------------------------
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-REPLICATE_API_TOKEN = os.environ.get("REPLICATE_API_TOKEN")
-
-if REPLICATE_API_TOKEN:
-    os.environ["REPLICATE_API_TOKEN"] = REPLICATE_API_TOKEN
+HF_TOKEN = os.environ.get("HF_TOKEN")
 
 client = genai.Client(api_key=GEMINI_API_KEY)
+hf_client = InferenceClient(token=HF_TOKEN)
 
 # ---------------------------------------------------------
 # 3. Presets Configuration
@@ -43,7 +41,7 @@ VOICE_PRESETS = {
     "charon": {"label": "📖 Charon (အေးဆေး)", "voice": "Charon", "type": "tts", "is_singing": False},
     "kore": {"label": "📰 Kore (သတင်းဖတ်)", "voice": "Kore", "type": "tts", "is_singing": False},
     "singing": {"label": "🎶 သီချင်းဆိုသံ (Singing Mode)", "voice": "Zephyr", "type": "tts", "is_singing": True},
-    "musicgen": {"label": "🎸 MusicGen AI (Replicate Music)", "type": "replicate_music"}
+    "musicgen": {"label": "🎸 MusicGen AI (Hugging Face)", "type": "hf_music"}
 }
 
 # ---------------------------------------------------------
@@ -88,34 +86,25 @@ def convert_to_wav(audio_data: bytes, mime_type: str) -> bytes:
     return header + audio_data
 
 # ---------------------------------------------------------
-# 5. Replicate MusicGen Music Generation (Async Non-Blocking)
+# 5. Hugging Face MusicGen Music Generation (Async Non-Blocking)
 # ---------------------------------------------------------
-async def generate_replicate_music(prompt_text: str) -> str:
+HF_MUSICGEN_MODEL = "facebook/musicgen-small"  # small = free-tier friendly, faster response
+
+async def generate_hf_music(prompt_text: str) -> bytes:
     loop = asyncio.get_running_loop()
 
-    output = await loop.run_in_executor(
+    audio_bytes = await loop.run_in_executor(
         None,
-        lambda: replicate.run(
-            "meta/musicgen:671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eedcfb",
-            input={
-                "prompt": prompt_text,
-                "model_version": "large",
-                "duration": 15
-            }
+        lambda: hf_client.text_to_audio(
+            prompt_text,
+            model=HF_MUSICGEN_MODEL
         )
     )
 
-    # Newer replicate client versions may return a FileOutput object
-    # instead of a plain URL string or list — handle all cases.
-    if hasattr(output, "url"):
-        return output.url()
-    elif isinstance(output, list) and len(output) > 0:
-        item = output[0]
-        return item.url() if hasattr(item, "url") else str(item)
-    elif isinstance(output, str):
-        return output
-    else:
-        raise Exception("Replicate မှ Audio URL မရရှိပါဗျာ။")
+    if not audio_bytes:
+        raise Exception("Hugging Face မှ Audio ဒေတာ မရရှိပါဗျာ။")
+
+    return audio_bytes
 
 # ---------------------------------------------------------
 # 6. Telegram Bot Handlers
@@ -127,14 +116,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("✨ Zephyr", callback_data="style_zephyr"), InlineKeyboardButton("😊 Puck", callback_data="style_puck")],
         [InlineKeyboardButton("📖 Charon", callback_data="style_charon"), InlineKeyboardButton("📰 Kore", callback_data="style_kore")],
         [InlineKeyboardButton("🎶 သီချင်းဆိုသံ (Singing Mode)", callback_data="style_singing")],
-        [InlineKeyboardButton("🎸 MusicGen AI (Replicate Music)", callback_data="style_musicgen")]
+        [InlineKeyboardButton("🎸 MusicGen AI (Hugging Face)", callback_data="style_musicgen")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     current = context.user_data.get("style", "zephyr")
     preset_label = VOICE_PRESETS[current]["label"]
 
     msg = (
-        f"မင်္ဂလာပါ အစ်ကိုအောင်! Gemini & Replicate AI Studio Bot မှ ကြိုဆိုပါတယ်။ ✨\n\n"
+        f"မင်္ဂလာပါ အစ်ကိုအောင်! Gemini & Hugging Face AI Studio Bot မှ ကြိုဆိုပါတယ်။ ✨\n\n"
         f"လက်ရှိ Mode: **{preset_label}**\n\n"
         f"💡 **အသုံးပြုနည်း:**\n"
         f"• စာရိုက်ပို့ပါက ရွေးချယ်ထားသော Mode အတိုင်း ထုတ်ပေးပါမည်။\n"
@@ -184,15 +173,18 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     try:
-        # 1. Replicate MusicGen Generation
-        if preset.get("type") == "replicate_music":
-            audio_url = await generate_replicate_music(user_text)
+        # 1. Hugging Face MusicGen Generation
+        if preset.get("type") == "hf_music":
+            audio_bytes = await generate_hf_music(user_text)
+            audio_file = io.BytesIO(audio_bytes)
+            audio_file.name = "musicgen_output.wav"
 
             await update.message.reply_audio(
-                audio=audio_url,
+                audio=audio_file,
+                filename="musicgen_output.wav",
                 caption=f"🎵 Prompt: {user_text}\n🎸 Mode: {preset['label']}",
                 title="MusicGen AI Song",
-                performer="Meta MusicGen",
+                performer="Meta MusicGen (Hugging Face)",
                 reply_to_message_id=update.message.message_id
             )
             await status_msg.delete()
@@ -277,7 +269,7 @@ def main():
     application.add_handler(CallbackQueryHandler(button_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, generate_voice))
 
-    print("Telegram Bot application starting with Replicate...")
+    print("Telegram Bot application starting with Hugging Face...")
     application.run_polling()
 
 if __name__ == '__main__':
