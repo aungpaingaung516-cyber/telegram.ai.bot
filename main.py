@@ -29,7 +29,6 @@ def run_flask():
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 REPLICATE_API_TOKEN = os.environ.get("REPLICATE_API_TOKEN")
 
-# Set Replicate Token into OS Environment for Replicate SDK
 if REPLICATE_API_TOKEN:
     os.environ["REPLICATE_API_TOKEN"] = REPLICATE_API_TOKEN
 
@@ -94,15 +93,14 @@ def convert_to_wav(audio_data: bytes, mime_type: str) -> bytes:
 async def generate_replicate_music(prompt_text: str) -> str:
     loop = asyncio.get_running_loop()
     
-    # Run Replicate model asynchronously in thread pool
     output = await loop.run_in_executor(
         None,
         lambda: replicate.run(
-            "facebook/musicgen:b05b1d413d013f99e31ff61f0088863f683e91129b010f37d6e499d146979a08",
+            "facebook/musicgen",
             input={
                 "prompt": prompt_text,
                 "model_version": "stereo-large",
-                "duration": 15  # သီချင်း စက္ကန့် ပမာဏ (15s to 30s)
+                "duration": 15
             }
         )
     )
