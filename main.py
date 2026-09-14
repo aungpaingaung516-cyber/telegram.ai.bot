@@ -96,7 +96,7 @@ async def generate_replicate_music(prompt_text: str) -> str:
     output = await loop.run_in_executor(
         None,
         lambda: replicate.run(
-            "meta/musicgen",
+            "meta/musicgen:671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eedcfb",
             input={
                 "prompt": prompt_text,
                 "model_version": "large",
