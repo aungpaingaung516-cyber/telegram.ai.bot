@@ -92,21 +92,26 @@ def convert_to_wav(audio_data: bytes, mime_type: str) -> bytes:
 # ---------------------------------------------------------
 async def generate_replicate_music(prompt_text: str) -> str:
     loop = asyncio.get_running_loop()
-    
+
     output = await loop.run_in_executor(
         None,
         lambda: replicate.run(
-            "facebook/musicgen",
+            "meta/musicgen",
             input={
                 "prompt": prompt_text,
-                "model_version": "stereo-large",
+                "model_version": "large",
                 "duration": 15
             }
         )
     )
-    
-    if isinstance(output, list) and len(output) > 0:
-        return str(output[0])
+
+    # Newer replicate client versions may return a FileOutput object
+    # instead of a plain URL string or list — handle all cases.
+    if hasattr(output, "url"):
+        return output.url()
+    elif isinstance(output, list) and len(output) > 0:
+        item = output[0]
+        return item.url() if hasattr(item, "url") else str(item)
     elif isinstance(output, str):
         return output
     else:
@@ -117,7 +122,7 @@ async def generate_replicate_music(prompt_text: str) -> str:
 # ---------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.chat_data["disabled"] = False
-    
+
     keyboard = [
         [InlineKeyboardButton("✨ Zephyr", callback_data="style_zephyr"), InlineKeyboardButton("😊 Puck", callback_data="style_puck")],
         [InlineKeyboardButton("📖 Charon", callback_data="style_charon"), InlineKeyboardButton("📰 Kore", callback_data="style_kore")],
@@ -127,7 +132,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     current = context.user_data.get("style", "zephyr")
     preset_label = VOICE_PRESETS[current]["label"]
-    
+
     msg = (
         f"မင်္ဂလာပါ အစ်ကိုအောင်! Gemini & Replicate AI Studio Bot မှ ကြိုဆိုပါတယ်။ ✨\n\n"
         f"လက်ရှိ Mode: **{preset_label}**\n\n"
@@ -160,7 +165,7 @@ async def generate_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_type = update.effective_chat.type
     if chat_type in ["group", "supergroup"]:
         is_reply_to_bot = (
-            update.message.reply_to_message and 
+            update.message.reply_to_message and
             update.message.reply_to_message.from_user.id == context.bot.id
         )
         if not is_reply_to_bot:
