@@ -1,5 +1,5 @@
 python-telegram-bot
 google-genai
 flask
-replicate
+huggingface_hub
 requests
